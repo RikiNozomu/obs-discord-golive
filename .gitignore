@@ -22,6 +22,10 @@
 # Exclude lock files
 *.lock.json
 
+# Exclude helper dependencies (M3 adds them) and any local dumps
+node_modules/
+/helper/dump/
+
 # Exclude macOS legacy resource forks
 .DS_Store
 

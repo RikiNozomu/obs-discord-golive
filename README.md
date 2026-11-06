@@ -11,10 +11,11 @@ See [GUIDELINE.md](GUIDELINE.md) for the full design.
 
 | Milestone | State |
 |---|---|
-| M0: confirm a helper library with DAVE support | not started (needs a Discord account) |
-| **M1: plugin skeleton, service, output, dock** | **done** |
-| M2: helper process, pipe protocol, mock helper | next |
-| M3–M5 | not started |
+| M0: confirm a helper library with DAVE support | **code audit done** — `@dank074/discord-video-stream` v7.0.0 really implements DAVE and takes pre-encoded frames ([GUIDELINE.md §5.1](GUIDELINE.md)). Live test still owed; needs a spare Discord account |
+| M1: plugin skeleton, service, output, dock | **done** |
+| M2: helper process, pipe protocol, mock helper | **helper side done** ([helper/](helper/)) — protocol, mock sink and 20 tests. Plugin side (writer thread, spawning the helper) still to do |
+| M3: real Discord backend | not started |
+| M4–M5 | not started |
 
 Clicking **Start Discord stream** currently checks the settings, creates the x264 and Opus encoders, and then stops with the message "The streaming pipeline is not built yet (milestone M2)".
 
@@ -51,6 +52,12 @@ tests/run-module-test.sh /path/to/obs-sdk
 ```
 
 This loads the built plugin into a headless libobs and checks that the service and output register, that the settings are validated, that the encoder settings are forced (no B-frames, 2 s keyframes, CBR), and that start failures give clear messages.
+
+The helper has its own suite, which needs no OBS SDK:
+
+```bash
+cd helper && npm test
+```
 
 ## Settings storage
 

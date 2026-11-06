@@ -173,9 +173,22 @@ Version the protocol (`"v": 1`). If the versions don't match, the helper reports
 
 ## 5. The helper (Node.js / TypeScript)
 
-### 5.1 Library choice (Milestone 0: do this first)
-- Base library: **`@dank074/discord-video-stream`**, which uses the `discord.js-selfbot-v13` client.
-- **Check DAVE support before anything else.** Upstream tracked end-to-end encryption in issue #102. At least one fork (`yellow-discord-stream`) says it supports DAVE. Pick the one that actually connects in a test today, then **pin its exact version** in `package.json` (no `^`).
+### 5.1 Library choice — **M0 verified 2026-11-07**
+Library: **`@dank074/discord-video-stream` v7.0.0** (published 2026-09-13, i.e. after the March 2026 DAVE enforcement). Verified by reading the published source:
+
+| Check | Finding |
+|---|---|
+| **DAVE support** | **Real, not a stub.** Depends on **`@snazzah/davey` ^0.1.12** (native MLS/DAVE). Implements the full voice opcode set — `MLS_KEY_PACKAGE`, `MLS_EXTERNAL_SENDER`, `MLS_PROPOSALS`, `MLS_COMMIT_WELCOME`, `MLS_WELCOME`, `DAVE_PREPARE_TRANSITION`, `DAVE_EXECUTE_TRANSITION`, `DAVE_PREPARE_EPOCH` — plus epoch transitions and protocol-version negotiation (`max_dave_protocol_version`). |
+| **Frame encryption** | `daveSession.encryptOpus(frame)` for audio, `daveSession.encrypt(MediaType.VIDEO, codec, frame)` for video, applied per frame right before the RTP send. |
+| **Frame input API** | `sendVideoFrame(frame: Buffer, frametime: number)` and `sendAudioFrame(frame: Buffer, frametime: number)` on the WebRTC wrapper. **These take pre-encoded buffers — no re-encode**, which is exactly our design. |
+| **H.264 format** | Annex B with start codes; it splits NALUs and rewrites the SPS VUI itself (`AnnexBHelper`, `SPSVUIRewriter`). **This is the format OBS encoders emit**, so our packets pass through as-is. |
+| **Codecs** | H264, H265, VP8, VP9, AV1 (we send H264). |
+| **Transport** | WebRTC via `@lng2004/node-datachannel`, not raw UDP/RTP as earlier assumed. |
+| **Requirements** | Node **≥22.4.0**; peer dependency **`@lng2004/discord.js-selfbot-v13` ^3.7.2** (a fork, not the original selfbot client). Native deps: `@snazzah/davey`, `node-datachannel`, `node-av`, `sharp`, `zeromq`. |
+
+> Still unproven: that a real account actually connects and streams. That needs a spare Discord account and a live test (§9 step 5). The protocol work above is confirmed present in code; only the live handshake is untested.
+
+**Pin exact versions** in `package.json` (no `^`) once a live test passes.
 
 ### 5.2 Flow
 ```ts
@@ -257,9 +270,9 @@ CI: keep the template's workflow and add a job that builds the helper with Node 
 
 | # | Deliverable | Done when |
 |---|---|---|
-| M0 | DAVE check | A standalone helper script streams a test file to Go Live with the pinned library |
+| M0 🟡 | DAVE check | **Code audit done** (§5.1): DAVE is really implemented and the frame API takes pre-encoded Annex-B H.264 / Opus. **Live test still owed** — needs a spare Discord account |
 | M1 ✅ | Plugin skeleton from the template | Builds clean (GCC and Clang, warnings as errors) against OBS 31.1.1; dock visible in OBS; headless module test passes |
-| M2 | Output + pipe + mock helper | Packets dumped from OBS play back correctly |
+| M2 🟡 | Output + pipe + mock helper | **Helper side done**: protocol, mock sink, Ogg dump and 20 tests (`helper/`), proven on real ffmpeg media. **Plugin side left**: packet queue, writer thread, spawning the helper — needs Xcode to build on macOS |
 | M3 | Real helper (Path A or B) | Live OBS feed visible in Discord |
 | M4 | Robustness | Drop policy, reconnect, token redaction, stats |
 | M5 | Packaging | Installers or zips with the bundled helper for each OS |

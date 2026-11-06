@@ -1,0 +1,15 @@
+{
+    "name": "obs-discord-golive-helper",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Receives encoded frames from the obs-discord-golive OBS plugin and forwards them to Discord",
+    "type": "module",
+    "main": "src/index.ts",
+    "engines": {
+        "node": ">=22.4.0"
+    },
+    "scripts": {
+        "test": "node --test test/",
+        "mock": "node src/index.ts --mock"
+    }
+}
