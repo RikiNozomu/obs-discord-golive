@@ -10,20 +10,28 @@ set(
   "OBS build number cache file"
 )
 
-# Read build number from cache file or manual override
+# Read build number from cache file or manual override.
+# An override that is set but empty (e.g. -DPLUGIN_BUILD_NUMBER= from an IDE or
+# an old cache) would leave set_target_properties with a missing value, so it is
+# treated like no override.
+if(DEFINED PLUGIN_BUILD_NUMBER AND NOT PLUGIN_BUILD_NUMBER MATCHES "^[0-9]+$")
+  unset(PLUGIN_BUILD_NUMBER CACHE)
+  unset(PLUGIN_BUILD_NUMBER)
+endif()
 if(NOT DEFINED PLUGIN_BUILD_NUMBER)
   if(EXISTS "${_BUILD_NUMBER_CACHE}")
     file(READ "${_BUILD_NUMBER_CACHE}" PLUGIN_BUILD_NUMBER)
+    string(STRIP "${PLUGIN_BUILD_NUMBER}" PLUGIN_BUILD_NUMBER)
+  endif()
+  if(PLUGIN_BUILD_NUMBER MATCHES "^[0-9]+$")
     math(EXPR PLUGIN_BUILD_NUMBER "${PLUGIN_BUILD_NUMBER}+1")
   else()
-    if("$ENV{CI}")
-      if("$ENV{GITHUB_RUN_ID}")
-        set(PLUGIN_BUILD_NUMBER "$ENV{GITHUB_RUN_ID}")
-      elseif("$ENV{GITLAB_RUN_ID}")
-        set(PLUGIN_BUILD_NUMBER "$ENV{GITLAB_RUN_ID}")
-      else()
-        set(PLUGIN_BUILD_NUMBER "1")
-      endif()
+    if("$ENV{CI}" AND "$ENV{GITHUB_RUN_ID}")
+      set(PLUGIN_BUILD_NUMBER "$ENV{GITHUB_RUN_ID}")
+    elseif("$ENV{CI}" AND "$ENV{GITLAB_RUN_ID}")
+      set(PLUGIN_BUILD_NUMBER "$ENV{GITLAB_RUN_ID}")
+    else()
+      set(PLUGIN_BUILD_NUMBER "1")
     endif()
   endif()
   file(WRITE "${_BUILD_NUMBER_CACHE}" "${PLUGIN_BUILD_NUMBER}")

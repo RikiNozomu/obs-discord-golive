@@ -277,6 +277,17 @@ jobs:
           "pluginName=${ProductName}" >> $env:GITHUB_OUTPUT
           "pluginVersion=${ProductVersion}" >> $env:GITHUB_OUTPUT
 
+      # The plugin ships the Node helper with its production dependencies,
+      # including Windows native modules, so install them on this runner.
+      - name: Set Up Node.js 🟩
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Helper Dependencies 📦
+        working-directory: helper
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin
         with:

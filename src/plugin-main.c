@@ -36,7 +36,7 @@ bool obs_module_load(void)
 {
 	discord_register_service();
 	discord_register_output();
-	obs_log(LOG_INFO, "plugin loaded successfully (version %s)", PLUGIN_VERSION);
+	obs_log(LOG_INFO, "plugin loaded successfully (version %s, build %s)", PLUGIN_VERSION, PLUGIN_BUILD_NUMBER);
 	return true;
 }
 

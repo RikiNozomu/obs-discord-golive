@@ -83,8 +83,6 @@ static obs_properties_t *discord_service_properties(void *unused)
 	obs_properties_add_text(props, S_CHANNEL_ID, obs_module_text("DiscordGoLive.ChannelId"), OBS_TEXT_DEFAULT);
 	obs_properties_add_path(props, S_TOKEN_FILE, obs_module_text("DiscordGoLive.TokenFile"), OBS_PATH_FILE, NULL,
 				NULL);
-	obs_properties_add_path(props, S_HELPER_PATH, obs_module_text("DiscordGoLive.HelperPath"), OBS_PATH_FILE, NULL,
-				NULL);
 
 	return props;
 }
@@ -124,6 +122,11 @@ static void discord_service_apply_encoder_settings(void *data, obs_data_t *video
 		obs_data_set_string(video, "profile", "main");
 		obs_data_set_string(video, "tune", "zerolatency");
 		obs_data_set_bool(video, "repeat_headers", true);
+		if (obs_data_get_int(video, "bitrate") > MAX_VIDEO_BITRATE) {
+			obs_log(LOG_WARNING, "video bitrate %lld Kbps is above Discord's limit, using %d Kbps",
+				(long long)obs_data_get_int(video, "bitrate"), MAX_VIDEO_BITRATE);
+			obs_data_set_int(video, "bitrate", MAX_VIDEO_BITRATE);
+		}
 		if (obs_data_get_int(video, "keyint_sec") <= 0 || obs_data_get_int(video, "keyint_sec") > 2)
 			obs_data_set_int(video, "keyint_sec", DEFAULT_KEYINT_SEC);
 	}

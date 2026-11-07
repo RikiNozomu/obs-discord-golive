@@ -96,8 +96,10 @@ bool obs_module_load(void) {
 | `get_output_type` | `"discord_output"` |
 | `get_supported_video_codecs` | `{"h264", NULL}` (add `"hevc"`/`"av1"` later if the library supports them) |
 | `get_supported_audio_codecs` | `{"opus", NULL}` |
-| `get_properties` | Guild ID, Voice channel ID, **Token file path** (never the token itself), Helper path (advanced) |
+| `get_properties` | Guild ID, Voice channel ID, **Token file path** (never the token itself). The helper path is not shown: users always run the bundled helper |
 | `apply_encoder_settings` | Force `bf=0`, `keyint_sec=2`, `rate_control=CBR`. Audio: 48 kHz stereo, 20 ms frames |
+
+> **Dock flow:** paste the token, press **Connect**. The dock runs the helper once with `--list --token-file <path>`; it logs in and answers with the voice channels the account may stream to (VIEW_CHANNEL + CONNECT + STREAM) and any Go Live the account is already running. The user picks a channel from the list, which enables **Start**. If a stream is already running elsewhere, the button reads **"Stop streaming in …"** and runs `--end-stream <guild> <channel>`: it sends STREAM_DELETE, briefly joins that channel to take the voice session over, leaves, then the dock refreshes the list. **Test mode (developers only, no UI since the public release):** start OBS with `OBS_DISCORD_GOLIVE_MOCK_DIR=<folder>` set. The stream is then dumped into that folder instead of going to Discord, and both commands use fake data; create `<folder>/fake-active-stream` to simulate a running stream. For example: `OBS_DISCORD_GOLIVE_MOCK_DIR=~/golive-test /Applications/OBS.app/Contents/MacOS/OBS`.
 
 > `apply_encoder_settings` matters. **B-frames** break real-time RTP playback, and a long keyframe interval makes viewers who join late wait for a picture.
 
@@ -122,7 +124,7 @@ struct obs_output_info discord_output_info = {
 **`start`** must return quickly. Do the slow work on a worker thread:
 1. `obs_output_can_begin_data_capture` → `obs_output_initialize_encoders`.
 2. Read the settings from `obs_output_get_service(output)`.
-3. Spawn the helper with `os_process_args_create` / `os_process_pipe_create2(args, "w")` (from `util/pipe.h`). These are cross-platform.
+3. Spawn the helper with `helper-process.c` (posix_spawn / CreateProcessW). **Corrected in M2:** libobs's `os_process_pipe_*` writes through a buffered `FILE*` with no flush (a small CONFIG frame never arrives, so READY never comes) and its destroy waits for the child with no timeout, so it is not used.
 4. Send the `CONFIG` frame (§4).
 5. Wait for the helper to report `READY` on stderr (`os_process_pipe_read_err`), with a timeout of about 20 s.
 6. `obs_output_begin_data_capture(output, 0)`.
@@ -165,7 +167,7 @@ CONFIG JSON:
   "audio": { "codec": "opus", "sampleRate": 48000, "channels": 2 } }
 ```
 
-Helper → plugin goes over **stderr, one line per message**: `READY`, `ERROR <msg>`, `LOG <msg>`, `STATS <json>`.
+Helper → plugin goes over **stderr, one line per message**: `READY`, `ERROR <msg>`, `LOG <msg>`, `STATS <json>`. The one-shot account commands (`--list`, `--end-stream`, run by the dock, not the output) answer with a single `RESULT <json>` line and exit 0.
 
 Version the protocol (`"v": 1`). If the versions don't match, the helper reports `ERROR` and exits.
 
@@ -215,6 +217,18 @@ process.stderr.write("READY\n");
 - Gateway or voice disconnect → `ERROR …` and exit non-zero. The plugin then reports "Disconnected", and OBS's own reconnect settings retry the stream.
 
 ### 5.5 Shipping the helper
+**Now (until M5):** the build copies `helper/src`, `package.json` and `node_modules` into the plugin (`Contents/Resources/helper/` on macOS, `data/helper/` on Windows and Linux). The plugin runs `helper/src/index.ts` with the user's Node.js (22.18 or newer), so **users never choose a helper path**. Before building, run `npm ci` in `helper/`. CMake warns if `node_modules` is missing. Developers can still run a different helper by setting the `OBS_DISCORD_GOLIVE_HELPER` environment variable to a helper path before starting OBS.
+
+The plugin looks for the helper in this order:
+
+| Order | Where | Who uses it |
+|---|---|---|
+| 1 | `helper_path` service setting | Automated tests only |
+| 2 | `OBS_DISCORD_GOLIVE_HELPER` environment variable | Developers |
+| 3 | `helper/discord-helper[.exe]` in the plugin | Users, after M5 |
+| 4 | `helper/src/index.ts` in the plugin, run with Node | Users, now |
+
+**Later (M5):**
 - Build it as a single executable with **Node SEA** (Node 20+) for each OS and architecture. Users then don't need Node installed.
 - Put it in `data/helper/` and locate it with `obs_module_file("helper/discord-helper[.exe]")`.
 - macOS: sign the helper with the same identity as the plugin.
@@ -222,7 +236,7 @@ process.stderr.write("READY\n");
 ---
 
 ## 6. Token handling (required)
-- The OBS setting stores only the **path** to a token file. OBS writes service settings in plain text to `service.json`.
+- The user types the token into the dock (a password field). The dock writes it to `<plugin config>/token`, created owner-only (`0600`), and passes only that **path** in the service settings. The token never goes into `settings.json` or `service.json`, which OBS writes in plain text.
 - Restrict the token file: `chmod 600` on macOS/Linux; on Windows, limit its permissions to the current user. Optional upgrade: store it in the OS keychain.
 - Pass it to the helper by **file path inside CONFIG**, never on the command line. Other users on the machine can read command lines.
 - Redact `[\w-]{24,}\.[\w-]{6}\.[\w-]{27,}` from every log line.
@@ -253,6 +267,26 @@ Preset names come from the template version you clone. Check `CMakePresets.json`
 
 CI: keep the template's workflow and add a job that builds the helper with Node SEA for each OS, then copies it into `data/helper/` before packaging.
 
+**Version and build number.** The version lives in `buildspec.json`; the script copies it to the helper's `package.json` and `package-lock.json` so they always match. The build number goes up by one on every CMake configure (`cmake --preset macos`), not on every build. It is kept in `cmake/.CMakeBuildNumber`, which is not committed. Run each command from the project root, then configure and build again.
+
+Example, starting from version `0.1.0` with build 8 as the last build:
+
+| Command | Result |
+|---|---|
+| `node scripts/version.mjs` | `version 0.1.0` · `last build 8` · `next build 9` (nothing changes) |
+| `cmake --preset macos` | Configures with build **9**; the next configure uses 10 |
+| `node scripts/version.mjs patch` | `version 0.1.0 -> 0.1.1, build number restarts at 1` |
+| `node scripts/version.mjs minor` | `version 0.1.1 -> 0.2.0, build number restarts at 1` |
+| `node scripts/version.mjs major` | `version 0.2.0 -> 1.0.0, build number restarts at 1` |
+| `node scripts/version.mjs set 1.2.3` | `version 1.0.0 -> 1.2.3, build number restarts at 1` |
+| `node scripts/version.mjs build 42` | `next build number: 42` (the version stays the same) |
+| `node scripts/version.mjs set 1.2` | `error: usage: set <major.minor.patch>, e.g. set 1.2.3` (nothing changes) |
+| `node scripts/version.mjs build x` | `error: usage: build <number>, a whole number of 1 or more` (nothing changes) |
+
+After rebuilding, the running plugin shows the numbers in two places:
+- The OBS log (Help → Log Files): `[obs-discord-golive] plugin loaded successfully (version 1.2.3, build 42)`.
+- The bottom of the dock: `Version 1.2.3 (build 42)`.
+
 ---
 
 ## 9. Testing plan
@@ -272,8 +306,8 @@ CI: keep the template's workflow and add a job that builds the helper with Node 
 |---|---|---|
 | M0 🟡 | DAVE check | **Code audit done** (§5.1): DAVE is really implemented and the frame API takes pre-encoded Annex-B H.264 / Opus. **Live test still owed** — needs a spare Discord account |
 | M1 ✅ | Plugin skeleton from the template | Builds clean (GCC and Clang, warnings as errors) against OBS 31.1.1; dock visible in OBS; headless module test passes |
-| M2 🟡 | Output + pipe + mock helper | **Helper side done**: protocol, mock sink, Ogg dump and 20 tests (`helper/`), proven on real ffmpeg media. **Plugin side left**: packet queue, writer thread, spawning the helper — needs Xcode to build on macOS |
-| M3 | Real helper (Path A or B) | Live OBS feed visible in Discord |
+| M2 ✅ | Output + pipe + mock helper | Plugin spawns the helper, sends CONFIG, waits for READY, streams through a bounded queue with a writer thread, drops video when the helper lags >700 ms. Verified headless on macOS against OBS 32.2 with real x264/Opus: mock dump decodes cleanly (H.264 Main, no B-frames, 2 s keyframes, A/V drift 13 ms); helper crash → Disconnected; missing/failing/hanging helper → clear errors, no orphan process. Windows half of `helper-process.c` written but not yet compiled |
+| M3 🟡 | Real helper (Path A or B) | **Code done (Path A)**: `helper/src/discord.ts` logs in, joins voice, starts Go Live and sends OBS frames via `sendVideoFrame`/`sendAudioFrame`, paced by `pacing.ts` (80 ms jitter buffer, shared A/V clock). Verified against the real gateway up to login (a bad token gives a clear error in OBS). **Live test still owed**: needs a spare account (§9 step 5) |
 | M4 | Robustness | Drop policy, reconnect, token redaction, stats |
 | M5 | Packaging | Installers or zips with the bundled helper for each OS |
 

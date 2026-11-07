@@ -7,6 +7,7 @@
  *   ERROR <message>       fatal; the helper exits non-zero after this
  *   LOG <message>         informational, forwarded to the OBS log
  *   STATS <json>          periodic counters
+ *   RESULT <json>         answer of a one-shot command (--list, --end-stream)
  */
 
 import { type Config, FrameParser, type Frame, FrameType, parseConfig } from "./protocol.ts";
@@ -32,6 +33,11 @@ export function log(message: string): void {
 
 export function stats(payload: unknown): void {
 	emit(`STATS ${JSON.stringify(payload)}`);
+}
+
+/** Writes the RESULT line and waits until it has left the process. */
+export function result(payload: unknown): Promise<void> {
+	return new Promise((resolve) => process.stderr.write(`${redact(`RESULT ${JSON.stringify(payload)}`)}\n`, () => resolve()));
 }
 
 export function fail(message: string): never {
