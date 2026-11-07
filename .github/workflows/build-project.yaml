@@ -134,6 +134,34 @@ jobs:
           notarizationUser: ${{ secrets.MACOS_NOTARIZATION_USERNAME }}
           notarizationPassword: ${{ secrets.MACOS_NOTARIZATION_PASSWORD }}
 
+      # The plugin bundle ships the Node helper with its production dependencies.
+      # Install them with native modules for both arm64 and x64, as
+      # scripts/release-macos.sh does, so the Universal build works on every Mac.
+      - name: Set Up Node.js 🟩
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Helper Dependencies 📦
+        working-directory: helper
+        run: |
+          : Install Helper Dependencies 📦
+          npm ci --omit=dev --ignore-scripts --no-audit --no-fund --cpu=arm64 --os=darwin
+
+          local x64_dir="${RUNNER_TEMP}/helper-darwin-x64"
+          rm -rf "${x64_dir}" && mkdir -p "${x64_dir}"
+          cp package.json package-lock.json "${x64_dir}/"
+          (cd "${x64_dir}" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund --cpu=x64 --os=darwin)
+
+          # Native modules ship as one package per platform (e.g. @snazzah/davey-darwin-x64).
+          for pkg in ${(f)"$(cd "${x64_dir}/node_modules" && find . -maxdepth 2 -type d -name '*darwin-x64*')"}; do
+            [[ -n ${pkg} ]] || continue
+            mkdir -p "node_modules/${pkg:h}"
+            rm -rf "node_modules/${pkg}"
+            cp -R "${x64_dir}/node_modules/${pkg}" "node_modules/${pkg}"
+            print "    + ${pkg#./}"
+          done
+
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin
         with:
