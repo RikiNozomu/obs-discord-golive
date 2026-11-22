@@ -3,11 +3,23 @@
  *
  * OBS hands frames over in bursts (encoder lookahead, interleaving, pipe
  * buffering). Sending a burst at once makes viewers stutter, so each frame is
- * held until wall-clock time  t0 + (pts - pts0) + buffer, with audio and video
- * on the same clock so they stay in sync.
+ * held until
  *
- * If frames arrive much later than their slot (OBS stalled, the machine was
- * busy), the clock is re-anchored instead of firing a backlog all at once.
+ *     due = pts + minLag + buffer
+ *
+ * where lag = arrival time - pts, and minLag is the smallest lag seen in the
+ * last few seconds: the delay of a frame that came through OBS with no hold-up.
+ * Audio and video share it, so they stay in sync.
+ *
+ * When OBS stalls (encoder or render lag), the frames from the stall arrive
+ * with a large lag. They do not move minLag, so they are already due and go
+ * out at once, and the frames after them are paced exactly as before: a stall
+ * costs one hiccup, never lasting delay. (The previous version re-anchored the
+ * clock on the first late frame, which kept the stall's delay forever and let
+ * repeated stalls pile up seconds of delay and periodic frozen video.)
+ *
+ * If OBS's delay grows for good (e.g. it adds audio buffering), minLag follows
+ * once the old, smaller lags have left the window.
  */
 
 import type { Frame } from "./protocol.ts";
@@ -27,24 +39,31 @@ export const realClock: Clock = {
 export interface PacerOptions {
 	/** Delay added to every frame to absorb arrival jitter. */
 	bufferMs: number;
-	/** A frame this late re-anchors the clock. */
-	resyncMs: number;
+	/** How long the smallest lag is remembered (between 1x and 2x this). */
+	windowMs: number;
 }
 
-export const DEFAULT_PACER_OPTIONS: PacerOptions = { bufferMs: 80, resyncMs: 500 };
+export const DEFAULT_PACER_OPTIONS: PacerOptions = { bufferMs: 80, windowMs: 3000 };
+
+/** A frame sent this much after its due time counts as late (stats only). */
+const LATE_MS = 100;
 
 export class Pacer {
 	private queue: Frame[] = [];
-	private t0: number | null = null;
-	private pts0 = 0;
 	private timer: unknown = null;
 	private stopped = false;
+
+	/* Sliding minimum of lag over two buckets of windowMs each. */
+	private bucketStart: number | null = null;
+	private bucketMin = Infinity;
+	private previousMin = Infinity;
 
 	private readonly send: (frame: Frame) => void;
 	private readonly clock: Clock;
 	private readonly opts: PacerOptions;
 
-	resyncs = 0;
+	/** Frames that arrived too late to be paced (each one is an OBS hiccup). */
+	lateFrames = 0;
 
 	constructor(send: (frame: Frame) => void, clock: Clock = realClock, opts: PacerOptions = DEFAULT_PACER_OPTIONS) {
 		this.send = send;
@@ -56,14 +75,8 @@ export class Pacer {
 		if (this.stopped) return;
 
 		const now = this.clock.now();
-		if (this.t0 === null) {
-			this.anchor(frame.ptsUs, now);
-		} else if (this.due(frame.ptsUs) < now - this.opts.resyncMs) {
-			this.resyncs++;
-			this.anchor(frame.ptsUs, now);
-			// Frames already queued belong to the old timeline; send them now.
-			this.flush();
-		}
+		this.observeLag(now - frame.ptsUs / 1000, now);
+		if (this.due(frame.ptsUs) < now - LATE_MS) this.lateFrames++;
 
 		// Keep the queue in pts order (audio and video interleave).
 		let i = this.queue.length;
@@ -71,13 +84,6 @@ export class Pacer {
 		this.queue.splice(i, 0, frame);
 
 		this.schedule();
-	}
-
-	/** Sends everything still queued, immediately. */
-	flush(): void {
-		const pending = this.queue;
-		this.queue = [];
-		for (const f of pending) this.send(f);
 	}
 
 	stop(): void {
@@ -91,13 +97,23 @@ export class Pacer {
 		return this.queue.length;
 	}
 
-	private anchor(ptsUs: number, now: number): void {
-		this.pts0 = ptsUs;
-		this.t0 = now + this.opts.bufferMs;
+	private observeLag(lag: number, now: number): void {
+		if (this.bucketStart === null) this.bucketStart = now;
+		if (now - this.bucketStart >= this.opts.windowMs) {
+			// A whole bucket of silence means the old minimum is stale too.
+			this.previousMin = now - this.bucketStart >= 2 * this.opts.windowMs ? Infinity : this.bucketMin;
+			this.bucketMin = Infinity;
+			this.bucketStart = now;
+		}
+		if (lag < this.bucketMin) this.bucketMin = lag;
+	}
+
+	private minLag(): number {
+		return Math.min(this.bucketMin, this.previousMin);
 	}
 
 	private due(ptsUs: number): number {
-		return (this.t0 ?? 0) + (ptsUs - this.pts0) / 1000;
+		return ptsUs / 1000 + this.minLag() + this.opts.bufferMs;
 	}
 
 	private schedule(): void {

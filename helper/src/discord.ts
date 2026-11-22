@@ -183,7 +183,7 @@ export class DiscordSink implements FrameSink {
 				videoKbps: kbps,
 				...this.sent,
 				queued: this.pacer?.queued ?? 0,
-				resyncs: this.pacer?.resyncs ?? 0,
+				lateFrames: this.pacer?.lateFrames ?? 0,
 				recoveries: this.watchdog?.recoveries ?? 0,
 			});
 		}, STATS_INTERVAL_MS);

@@ -147,6 +147,22 @@ Forward each helper stderr line through `blog(LOG_INFO, "[discord-helper] %s", l
 
 ---
 
+### 3.5 Single-source streaming (filter)
+`src/discord-filter.c` registers the **Discord Go Live** filter (`discord_golive_filter`, video + audio). It passes everything through. Its controls are its own OBS properties (the pane on the right of the Filters dialog), built by a hidden per-filter controller: a `DiscordDock` constructed with the filter and never shown. `get_properties` returns `BuildProperties()`, a picture of the controller's state; the pane's buttons call it; edits reach it through the filter's `update` (`ApplyFilterSettings()`); when its state changes it calls `obs_source_update_properties()` so the Filters dialog rebuilds the pane (only if something visible changed). The typed token sits in the filter settings only until **Connect**, which moves it into the token file and clears it.
+
+- settings (channel, quality, encoder) are stored in the filter's own settings, so they are saved with the scene collection;
+- the account token is in `<plugin config>/tokens/<filter uuid>`, owner-only, never in the filter settings (§6);
+- one controller per filter (`g_windows`); closing the Filters dialog does not stop its stream; deleting the filter (`filter_remove` on the source) or the source (`remove`) stops it;
+- each controller has its own output and helper, so several filters can stream at once with different accounts.
+
+When a window starts, `discord_filter_begin()`:
+
+1. makes the parent source active (`obs_source_inc_active`), so media and similar sources play even when not in the program;
+2. renders it on its own canvas with an `obs_view` and `obs_view_add2()` (canvas = the source's size, OBS frame rate), which gives the video encoder its own `video_t`;
+3. copies the source's audio out of `filter_audio` into a small per-channel buffer, which an `audio_output_open()` input callback drains, giving the audio encoder its own `audio_t`.
+
+The output, helper and pacing are unchanged. The dock releases the encoders before `discord_filter_end()`. `tests/e2e-headless.c` with `E2E_MEDIA=<file>` (and `E2E_MEDIA2=<file>` for a second, simultaneous stream) streams media files through filters and checks size, picture and sound.
+
 ## 4. Pipe protocol (plugin → helper stdin)
 
 All integers are little-endian. One frame:
@@ -209,8 +225,8 @@ process.stderr.write("READY\n");
 ```
 
 ### 5.3 Pacing (only for Path A)
-- Send each frame at wall-clock time `t0 + (pts_us - pts0)`. Sending in bursts makes playback stutter.
-- Audio is the master clock. If video falls more than 1 frame behind audio, send it immediately. If it is ahead, wait.
+- Send each frame at wall-clock time `pts + minLag + 80 ms`, where `lag = arrival - pts` and `minLag` is the smallest lag of the last 3–6 s (`helper/src/pacing.ts`). Audio and video share it, so they stay in sync.
+- **Corrected after 0.1.0:** the first version re-anchored the clock on the first late frame after an OBS stall. That kept the stall's delay for good, and repeated stalls piled up seconds of delay (logs showed queues of 107 and 946 frames) with periodic frozen video. With `minLag`, frames from a stall go out at once and the next frames are paced as before.
 
 ### 5.4 Shutdown and errors
 - `STOP` frame, or stdin EOF → leave the stream, leave voice, `client.destroy()`, exit 0.

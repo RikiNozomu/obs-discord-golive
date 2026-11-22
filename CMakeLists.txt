@@ -49,6 +49,8 @@ target_sources(
     src/discord-ids.h
     src/discord-service.c
     src/discord-output.c
+    src/discord-filter.c
+    src/discord-filter.h
     src/helper-process.c
     src/helper-process.h
     src/discord-dock.hpp

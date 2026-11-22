@@ -56,7 +56,7 @@ function setup(bufferMs = 80) {
 	const pacer = new Pacer(
 		(f) => sent.push({ ptsMs: f.ptsUs / 1000, at: clock.now(), type: f.type }),
 		clock,
-		{ bufferMs, resyncMs: 500 },
+		{ bufferMs, windowMs: 2000 },
 	);
 	return { clock, sent, pacer };
 }
@@ -68,12 +68,14 @@ test("a burst of frames is spread out to real time", () => {
 	pacer.push(video(33));
 	pacer.push(video(66));
 
-	clock.advance(79);
+	clock.advance(13);
 	assert.equal(sent.length, 0, "nothing before the jitter buffer elapses");
 	clock.advance(200);
 	assert.deepEqual(
 		sent.map((s) => s.at),
-		[80, 113, 146],
+		// Frame 66 arrived earliest relative to its pts, so it sets the timeline:
+		// it waits the full 80 ms and the others keep their 33 ms spacing.
+		[14, 47, 80],
 	);
 });
 
@@ -95,20 +97,62 @@ test("audio and video are sent in pts order on one clock", () => {
 	);
 });
 
-test("frames arriving far too late re-anchor the clock instead of firing a backlog", () => {
-	const { clock, sent, pacer } = setup(50);
-	pacer.push(video(0));
-	clock.advance(60);
-	assert.equal(sent.length, 1);
+/** Pushes one frame at its own pts time (an on-time arrival) and runs the clock there. */
+function pushAt(clock: FakeClock, pacer: Pacer, frame: Frame): void {
+	const at = frame.ptsUs / 1000;
+	if (at > clock.t) clock.advance(at - clock.t);
+	pacer.push(frame);
+}
 
-	// OBS stalls for 2 s, then resumes with the next frame.
-	clock.advance(2000);
-	pacer.push(video(33));
-	assert.equal(pacer.resyncs, 1);
-	clock.advance(49);
-	assert.equal(sent.length, 1, "re-anchored frame still gets the jitter buffer");
-	clock.advance(2);
-	assert.equal(sent.length, 2);
+test("an OBS stall does not add lasting delay (the frozen-video bug)", () => {
+	const { clock, sent, pacer } = setup(80);
+	// 1 s of normal 30 fps video.
+	for (let pts = 0; pts <= 1000; pts += 33) pushAt(clock, pacer, video(pts));
+	// OBS freezes for 2 s, then hands over the backlog in one burst.
+	clock.advance(3000 - clock.t);
+	for (let pts = 1023; pts < 3000; pts += 33) pacer.push(video(pts));
+	clock.advance(1); // the backlog is late already: it goes out at once
+	const backlog = sent.filter((s) => s.ptsMs >= 1023 && s.ptsMs < 3000);
+	assert.ok(backlog.length > 50 && backlog.every((s) => s.at <= 3001), "backlog sent immediately");
+	// Normal frames again: each must wait only the 80 ms buffer, not the 2 s stall.
+	for (let pts = 3003; pts <= 4000; pts += 33) pushAt(clock, pacer, video(pts));
+	clock.advance(200);
+	const after = sent.filter((s) => s.ptsMs >= 3003);
+	assert.ok(after.length > 25);
+	for (const s of after) assert.ok(s.at - s.ptsMs <= 81, `pts ${s.ptsMs} waited ${s.at - s.ptsMs} ms`);
+	assert.ok(pacer.lateFrames > 50);
+});
+
+test("repeated stalls never pile up delay", () => {
+	const { clock, sent, pacer } = setup(80);
+	let pts = 0;
+	for (let round = 0; round < 10; round++) {
+		for (let i = 0; i < 30; i++, pts += 33) pushAt(clock, pacer, video(pts));
+		clock.advance(700); // stall
+		for (let i = 0; i < 21; i++, pts += 33) pacer.push(video(pts)); // backlog
+	}
+	for (let i = 0; i < 30; i++, pts += 33) pushAt(clock, pacer, video(pts));
+	clock.advance(200);
+	const last = sent.at(-1);
+	assert.ok(last && last.at - last.ptsMs <= 81, `final delay ${last && last.at - last.ptsMs} ms`);
+	assert.ok(pacer.queued < 5, `queue drained (${pacer.queued})`);
+});
+
+test("a lasting increase in OBS delay is adopted after the window", () => {
+	const { clock, sent, pacer } = setup(80);
+	for (let pts = 0; pts <= 1000; pts += 20) pushAt(clock, pacer, audio(pts));
+	// From now on every frame arrives 150 ms after its pts (more audio buffering in OBS).
+	for (let pts = 1020; pts <= 8000; pts += 20) {
+		clock.advance(pts + 150 - clock.t);
+		pacer.push(audio(pts));
+	}
+	clock.advance(200);
+	const tail = sent.filter((s) => s.ptsMs > 7000);
+	assert.ok(tail.length > 40);
+	for (const s of tail) {
+		const wait = s.at - (s.ptsMs + 150);
+		assert.ok(wait >= 79 && wait <= 81, `paced 80 ms over the new delay, got ${wait} ms`);
+	}
 });
 
 test("stop discards queued frames and sends nothing more", () => {

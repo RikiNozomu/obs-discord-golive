@@ -15,7 +15,9 @@ The plugin adds a **Discord Go Live** panel to OBS. Log in, pick a voice channel
 - **Pick from a list:** after you connect, the dock lists the voice channels the account can stream in. No IDs to copy.
 - **Stream quality presets:** 720p 30 fps (works without Nitro), 1080p 30 fps, 1080p 60 fps, or the same as OBS. The bitrate is chosen for you. Your OBS settings and other outputs are not changed.
 - **Stops a stream left running elsewhere:** if the account is already streaming on another device, the dock offers **Stop streaming in …** before you start here.
+- **Stream single sources, with several accounts at once:** add the **Discord Go Live** filter to a source (a game, a window, a webcam). Its settings (right in the Filters window) work just like the dock, with their own account, voice channel and Start button, and streams only that source with only its own sound. Each filtered source can stream at the same time with a different account.
 - **Runs next to your normal stream:** the Discord stream uses its own encoders.
+- **Hardware encoding:** uses the GPU encoder when there is one (Apple VideoToolbox, NVIDIA NVENC), so OBS stays smooth.
 - **Your token stays on your computer:** it is saved in a file only your user account can read, and only sent to Discord. It never appears in OBS logs.
 - **Reconnects** by itself if the connection to Discord drops.
 
@@ -71,6 +73,22 @@ Unzip `obs-discord-golive-<version>-macos-universal.zip` and move `obs-discord-g
 | **Refresh** | Connected; reloads the channel list |
 | **Stop streaming in …** | The account is already live somewhere else. Stop that first, then Start appears |
 
+The dock always streams the whole OBS output (what your viewers on Twitch or YouTube see).
+
+### Stream single sources (several accounts at once)
+
+1. In OBS, right-click the source you want to stream (for example your game capture) → **Filters**.
+2. Click **+** and choose **Discord Go Live**.
+3. The filter's settings appear on the right and work like the dock: paste an account token, **Connect**, choose a voice channel and quality, **Start**.
+
+Viewers then see only that source, at its own size, and hear only its own audio: no microphone, no other sources, and no scene switches. The source does not need to be in the current scene.
+
+- Each filter remembers its own account, channel and quality. Add the filter to more sources to stream several of them at the same time, each with **a different Discord account** (one account can only Go Live once).
+- Closing the Filters window does not stop the stream; open the filter again to see its status or stop it.
+- When you press **Connect**, the token moves out of the filter's settings into its own private file, so it is never saved in your scene collection. Press **Connect** right after pasting it.
+- Removing the filter or the source stops its stream.
+- If the source changes size while streaming (for example you resize the game window), stop and start again to use the new size.
+
 ### Stream quality
 
 | Choice | Video | Needs Nitro |
@@ -82,6 +100,8 @@ Unzip `obs-discord-golive-<version>-macos-universal.zip` and move `obs-discord-g
 
 The plugin never upscales: if OBS outputs 720p, choosing 1080p still streams 720p. Audio is always 128 Kbps Opus.
 
+**Video encoder:** **Automatic** uses the hardware encoder when there is one and falls back to x264 by itself if it fails to start. Choose **Software (x264)** if you want to force x264.
+
 ## Troubleshooting
 
 | Message or symptom | What to do |
@@ -91,6 +111,8 @@ The plugin never upscales: if OBS outputs 720p, choosing 1080p still streams 720
 | *This account cannot stream in any voice channel* | The account needs permission to view, connect and stream (Video) in at least one voice channel |
 | Viewers see audio but the video freezes or spins | Choose a lower **Stream quality** (720p, 30 fps), and check your upload speed |
 | *The plugin's helper is missing* | Reinstall the plugin |
+| *The selected source shows no picture right now* | The source has nothing to show (for example the game or window is closed). Open it, then start again |
+| Two streams with the same account | Discord allows one Go Live per account, so the second one ends the first. Use a different account in each filter |
 | No **Discord Go Live** under Docks | The plugin did not load. Check it is in the plugins folder above, and that your OBS is version 31 or newer |
 
 For details, open **Help → Log Files → View Current Log** in OBS and search for `obs-discord-golive`. The token never appears in the log, so you can share it when asking for help.
@@ -100,7 +122,7 @@ For details, open **Help → Log Files → View Current Log** in OBS and search 
 - **macOS:** delete `~/Library/Application Support/obs-studio/plugins/obs-discord-golive.plugin`.
 - **Windows:** delete `C:\ProgramData\obs-studio\plugins\obs-discord-golive`.
 
-The saved token and settings are in the OBS plugin settings folder (`plugin_config/obs-discord-golive`) inside your OBS configuration folder: `~/Library/Application Support/obs-studio` on macOS, `%APPDATA%\obs-studio` on Windows. Delete that folder to remove them too.
+The saved tokens and settings are in the OBS plugin settings folder (`plugin_config/obs-discord-golive`; the tokens of filters are in its `tokens` folder) inside your OBS configuration folder: `~/Library/Application Support/obs-studio` on macOS, `%APPDATA%\obs-studio` on Windows. Delete that folder to remove them too.
 
 ## For developers
 

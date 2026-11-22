@@ -15,6 +15,7 @@ int main(int argc, char **argv) {
 	CHECK(obs_init_module(mod), "obs_module_load succeeds");
 	CHECK(has_type(obs_enum_service_types, "discord_golive_service"), "service type registered");
 	CHECK(has_type(obs_enum_output_types, "discord_golive_output"), "output type registered");
+	CHECK(has_type(obs_enum_filter_types, "discord_golive_filter"), "filter type registered");
 	printf("     service display name: %s\n", obs_service_get_display_name("discord_golive_service"));
 
 	obs_data_t *s = obs_data_create();

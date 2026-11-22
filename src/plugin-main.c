@@ -19,6 +19,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-module.h>
 #include <plugin-support.h>
 
+#include "discord-filter.h"
 #include "discord-ids.h"
 
 OBS_DECLARE_MODULE()
@@ -36,6 +37,7 @@ bool obs_module_load(void)
 {
 	discord_register_service();
 	discord_register_output();
+	discord_register_filter();
 	obs_log(LOG_INFO, "plugin loaded successfully (version %s, build %s)", PLUGIN_VERSION, PLUGIN_BUILD_NUMBER);
 	return true;
 }

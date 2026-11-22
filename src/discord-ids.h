@@ -32,7 +32,10 @@ the Free Software Foundation; either version 2 of the License, or
 /* Dock-only settings keys (encoder choices). */
 #define S_KEYINT_SEC "keyint_sec"
 
+#define S_CHANNEL "channel" /* filter pane: "<guild id>:<channel id>" */
+#define S_TOKEN "token"     /* filter pane only, until Connect moves it to the token file */
 #define S_QUALITY "quality"
+#define S_ENCODER "encoder" /* 0 = automatic (hardware if available), 1 = x264 */
 
 #define DEFAULT_VIDEO_BITRATE 4000
 /*
